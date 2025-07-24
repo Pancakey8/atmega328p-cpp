@@ -1,0 +1,14 @@
+{
+    "version": 8,
+    "configurePresets": [
+        {
+            "name": "debug-build",
+            "displayName": "Debug Build",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/${presetName}",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug"
+            }
+        }
+    ]
+}
