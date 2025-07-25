@@ -1,5 +1,7 @@
 #include "flash.h"
+#include "cpu.h"
 
+#include <stdbool.h>
 #include <stdlib.h>
 
 const uint16_t FLASH_MEMORY_SIZE = 0x8000;
@@ -13,61 +15,119 @@ void flash_fmemdestroy(uint16_t **fmemory) {
 
 uint16_t *flash_getpc(uint16_t *fmemory) { return fmemory; }
 
+uint16_t opc_gethigh6(uint16_t opc) { return opc >> 10; }
+
+uint16_t opc_getrd(uint16_t opc) { return (opc & 0b0000000111110000) >> 4; }
+
+uint16_t opc_getrr(uint16_t opc) {
+  return (opc & 0b0000000000001111) + ((opc & 0b0000001000000000) >> 5);
+}
+
 struct flash_opcode flash_poppc(uint16_t **pc) {
-  struct flash_opcode opcode;
+  struct flash_opcode retval;
 
-  if ((**pc & IMASK_ADD) == INST_ADD) {
-    float rd = (**pc & 0b0000000111110000) >> 4;
-    float rr = (**pc & 0b0000000000001111) + ((**pc & 0b0000001000000000) >> 5);
+  uint16_t high6 = opc_gethigh6(**pc);
+  uint16_t rd = opc_getrd(**pc);
+  uint16_t rr = opc_getrr(**pc);
 
-    opcode =
-        (struct flash_opcode){.param1 = rd, .param2 = rr, .opcode = INST_ADD};
-  } else if ((**pc & IMASK_ADC) == INST_ADC) {
-    float rd = (**pc & 0b0000000111110000) >> 4;
-    float rr = (**pc & 0b0000000000001111) + ((**pc & 0b0000001000000000) >> 5);
+  retval.param1 = rd;
+  retval.param2 = rr;
 
-    opcode =
-        (struct flash_opcode){.param1 = rd, .param2 = rr, .opcode = INST_ADC};
-  } else if (**pc == INST_SPECIAL_END) {
-    opcode = (struct flash_opcode){.opcode = INST_SPECIAL_END};
+  // Irregulars group 1
+  if (high6 == 0b100101) {
+    if (rr == 0b00101) {
+      retval.opcode = INST_ASR;
+    } else if (rr == 0b01100 ||
+               rr == 0b01101) { // JMP claims 22-bit K, we only need 14, thus we
+                                // can only reference the latter 16 bits. Ignore
+                                // rest.
+      (*pc)++;
+      retval.param1 = **pc;
+      retval.opcode = INST_JMP;
+    }
+  }
+  // two param regulars
+  else if (high6 == 0b000011) {
+    retval.opcode = INST_ADD;
+  } else if (high6 == 0b000111) {
+    retval.opcode = INST_ADC;
+  } else if (high6 == 0b001000) {
+    retval.opcode = INST_AND;
   }
 
+  if (**pc == INST_SPECIAL_END)
+    retval.opcode = INST_SPECIAL_END;
+
   (*pc)++;
-  return opcode;
+  return retval;
 }
 
 void flash_runop(struct flash_opcode op, uint8_t *memory,
-                 uint8_t *status_register, uint8_t **stack) {
+                 uint8_t *status_register, uint8_t **stack, uint16_t **pc,
+                 uint16_t *fmemory) {
   switch (op.opcode) {
+  case INST_ADC:
   case INST_ADD: {
     uint8_t *rd = CPU_memgpr(memory, op.param1);
-    uint8_t *rs = CPU_memgpr(memory, op.param2);
-    uint8_t rd7 = *rd >> 7;
-    uint8_t rs7 = *rs >> 7;
-    uint16_t res16 = (uint16_t)*rd + (uint16_t)*rs;
+    uint8_t *rr = CPU_memgpr(memory, op.param2);
+    uint16_t res16 = (uint16_t)*rd + (uint16_t)*rr;
     uint8_t R = (uint8_t)(res16 & 0xFF);
+    if (op.opcode == INST_ADC) {
+      uint8_t C = CPU_sregget(*status_register, SREG_CARRY_FLAG);
+      res16 += (uint16_t)C;
+    }
+    uint8_t rd7 = *rd >> 7;
+    uint8_t rr7 = *rr >> 7;
     uint8_t R7 = R >> 7;
     CPU_sregset(status_register, SREG_CARRY_FLAG,
-                (rd7 & rs7) | (rs7 & ~R7) | (~R7 & rd7));
+                (rd7 & rr7) | (rr7 & ~R7) | (~R7 & rd7));
+    uint8_t rd3 = (*rd >> 3) & 1;
+    uint8_t rr3 = (*rr >> 3) % 1;
+    uint8_t R3 = (R >> 3) & 1;
+    CPU_sregset(status_register, SREG_HALFCARRY_FLAG,
+                (rd3 & rr3) | (rr3 & ~R3) | (~R3 & rd3));
+    CPU_sregset(status_register, SREG_NEGATIVE_FLAG, R7);
+    CPU_sregset(status_register, SREG_ZERO_FLAG, R == 0);
+    CPU_sregset(status_register, SREG_TWOSCOMP_OF_FLAG,
+                (rd7 & rr7 & ~R7) | (~rd7 & ~rr7 & R7));
     *rd = R;
     break;
   }
-  case INST_ADC: {
+
+  case INST_AND: {
     uint8_t *rd = CPU_memgpr(memory, op.param1);
-    uint8_t *rs = CPU_memgpr(memory, op.param2);
+    uint8_t *rr = CPU_memgpr(memory, op.param2);
+    *rd = *rd & *rr;
+    CPU_sregset(status_register, SREG_TWOSCOMP_OF_FLAG, 0);
+    CPU_sregset(status_register, SREG_ZERO_FLAG, *rd == 0);
+    CPU_sregset(status_register, SREG_NEGATIVE_FLAG, *rd >> 7);
+    break;
+  }
+
+  case INST_ASR: {
+    uint8_t *rd = CPU_memgpr(memory, op.param1);
+    uint8_t C = *rd & 1;
+    CPU_sregset(status_register, SREG_CARRY_FLAG, C);
     uint8_t rd7 = *rd >> 7;
-    uint8_t rs7 = *rs >> 7;
-    uint8_t C = CPU_sregget(*status_register, SREG_CARRY_FLAG);
-    uint16_t res16 = (uint16_t)*rd + (uint16_t)*rs + (uint16_t)C;
-    uint8_t R = (uint8_t)(res16 & 0xFF);
-    uint8_t R7 = R >> 7;
-    CPU_sregset(status_register, SREG_CARRY_FLAG,
-                (rd7 & rs7) | (rs7 & ~R7) | (~R7 & rd7));
-    *rd = R;
+    uint8_t rd_min_7 = *rd & ~(1 << 7);
+    *rd = (rd7 << 7) + (rd_min_7 >> 1);
+    CPU_sregset(status_register, SREG_ZERO_FLAG, *rd == 0);
+    uint8_t N = rd7 == 1;
+    CPU_sregset(status_register, SREG_NEGATIVE_FLAG, N);
+    CPU_sregset(status_register, SREG_TWOSCOMP_OF_FLAG, C ^ N);
+    break;
+  }
+
+  case INST_JMP: {
+    *pc = &fmemory[op.param1];
     break;
   }
 
   default:
     break;
   }
+
+  uint8_t V = CPU_sregget(*status_register, SREG_TWOSCOMP_OF_FLAG);
+  uint8_t N = CPU_sregget(*status_register, SREG_NEGATIVE_FLAG);
+  CPU_sregset(status_register, SREG_SIGNBIT_FLAG, N ^ V);
 }

@@ -8,7 +8,7 @@
             "name": "C/C++ Debug (gdb Launch)",
             "type": "cppdbg",
             "request": "launch",
-            "program": "${workspaceFolder}/build/atmega328p-sim",
+            "program": "${workspaceFolder}/build/debug-build/atmega328p-sim",
             "args": [],
             "stopAtEntry": true,
             "cwd": "${workspaceFolder}",
