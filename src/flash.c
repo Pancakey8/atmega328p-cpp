@@ -45,6 +45,33 @@ struct flash_opcode flash_poppc(uint16_t **pc) {
       retval.param1 = **pc;
       retval.opcode = INST_JMP;
     }
+    // Irregulars group 2
+  } else if (high6 == 0b111100 || high6 == 0b111101) {
+    uint8_t branch_code = (rr & 0b111);
+    retval.param1 = (**pc >> 3) & 0b1111111;
+
+    if (high6 == 0b111100) {
+      switch (branch_code) {
+      case 0b001:
+        retval.opcode = INST_BREQ;
+        break;
+      case 0b100:
+        retval.opcode = INST_BRLT;
+        break;
+      }
+    } else if (high6 == 0b111101) {
+      switch (branch_code) {
+      case 0b100:
+        retval.opcode = INST_BRGE;
+        break;
+      case 0b001:
+        retval.opcode = INST_BRNE;
+        break;
+      case 0b000:
+        retval.opcode = INST_BRSH;
+        break;
+      }
+    }
   }
   // two param regulars
   else if (high6 == 0b000011) {
@@ -53,6 +80,8 @@ struct flash_opcode flash_poppc(uint16_t **pc) {
     retval.opcode = INST_ADC;
   } else if (high6 == 0b001000) {
     retval.opcode = INST_AND;
+  } else if (high6 == 0b000101) {
+    retval.opcode = INST_CP;
   }
 
   if (**pc == INST_SPECIAL_END)
@@ -120,6 +149,60 @@ void flash_runop(struct flash_opcode op, uint8_t *memory,
 
   case INST_JMP: {
     *pc = &fmemory[op.param1];
+    break;
+  }
+
+  case INST_CP: {
+    uint8_t *rd = CPU_memgpr(memory, op.param1);
+    uint8_t *rr = CPU_memgpr(memory, op.param2);
+    uint8_t R = *rd - *rr;
+    uint8_t R7 = R >> 7;
+    uint8_t rd7 = *rd >> 7;
+    uint8_t rr7 = *rr >> 7;
+    uint8_t rd3 = (*rd >> 3) & 1;
+    uint8_t rr3 = (*rr >> 3) % 1;
+    uint8_t R3 = (R >> 3) & 1;
+
+    CPU_sregset(status_register, SREG_HALFCARRY_FLAG,
+                (~rd3 & rr3) | (rr3 & R3) | (R3 & ~rd3));
+    CPU_sregset(status_register, SREG_TWOSCOMP_OF_FLAG,
+                (rd7 & ~rr7 & ~R7) | (~rd7 & rr7 & R7));
+    CPU_sregset(status_register, SREG_NEGATIVE_FLAG, R7 == 1);
+    CPU_sregset(status_register, SREG_ZERO_FLAG, R == 0);
+    CPU_sregset(status_register, SREG_CARRY_FLAG,
+                (~rd7 & rr7) | (rr7 & R7) | (R7 & ~rd7));
+    break;
+  }
+
+  case INST_BREQ:
+  case INST_BRLT:
+  case INST_BRGE:
+  case INST_BRNE:
+  case INST_BRSH: {
+    uint8_t flag;
+
+    switch (op.opcode) {
+    case INST_BREQ:
+      flag = CPU_sregget(*status_register, SREG_ZERO_FLAG);
+      break;
+    case INST_BRLT:
+      flag = CPU_sregget(*status_register, SREG_SIGNBIT_FLAG);
+      break;
+    case INST_BRGE:
+      flag = !CPU_sregget(*status_register, SREG_SIGNBIT_FLAG);
+      break;
+    case INST_BRNE:
+      flag = !CPU_sregget(*status_register, SREG_ZERO_FLAG);
+      break;
+    case INST_BRSH:
+      flag = !CPU_sregget(*status_register, SREG_CARRY_FLAG);
+    default:
+      break;
+    }
+
+    if (flag == 1) {
+      (*pc) += op.param1;
+    }
     break;
   }
 

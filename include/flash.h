@@ -18,6 +18,12 @@ enum flash_instruction {
   INST_AND,
   INST_ASR,
   INST_JMP,
+  INST_CP,
+  INST_BREQ,
+  INST_BRLT,
+  INST_BRGE,
+  INST_BRNE,
+  INST_BRSH,
   INST_SPECIAL_END = 0xFF
 };
 

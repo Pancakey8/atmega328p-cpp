@@ -1,5 +1,6 @@
 #include "cpu.h"
 #include "flash.h"
+#include <stdio.h>
 
 int main() {
   uint8_t *memory = CPU_memnew();
@@ -12,11 +13,21 @@ int main() {
   uint8_t *r1 = CPU_memgpr(memory, 1);
   *r1 = 1;
 
+  uint8_t *r2 = CPU_memgpr(memory, 2);
+  *r2 = 10;
+
   uint16_t *fmemory = flash_fmemnew();
-  fmemory[0] = 0b0000110000000001; // ADD R0,R1
-  fmemory[1] = 0b1001010000001100; // JMP..
-  fmemory[2] = 0;                  // ..ADDR0
-  fmemory[3] = INST_SPECIAL_END;
+  // CP r0,r2
+  // BRLT +1
+  // END
+  // ADD r0,r1
+  // JMP 0
+  fmemory[0] = 0b0001010000000010;
+  fmemory[1] = 0b1111000000001100;
+  fmemory[2] = INST_SPECIAL_END;
+  fmemory[3] = 0b0000110000000001;
+  fmemory[4] = 0b1001010000001100;
+  fmemory[5] = 0b0000000000000000;
   uint16_t *pc = flash_getpc(fmemory);
 
   struct flash_opcode opcode;
@@ -25,6 +36,7 @@ int main() {
     if (opcode.opcode == INST_SPECIAL_END)
       break;
     flash_runop(opcode, memory, &status_register, &stack, &pc, fmemory);
+    printf("%d\n", *r0);
   }
 
   flash_fmemdestroy(&fmemory);
