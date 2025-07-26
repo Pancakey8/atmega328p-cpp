@@ -1,8 +1,39 @@
+#include "asm.h"
 #include "cpu.h"
 #include "flash.h"
 #include <stdio.h>
+#include <stdlib.h>
 
 int main() {
+  char *buf = 0;
+  size_t len = 0;
+  FILE *f = fopen("./example.asm", "rb");
+
+  fseek(f, 0, SEEK_END);
+  len = ftell(f);
+  fseek(f, 0, SEEK_SET);
+  buf = malloc(len);
+  fread(buf, 1, len, f);
+  fclose(f);
+
+  struct asm_token tok;
+
+  char *next = buf;
+  while ((next = get_next(next, &tok)) != NULL) {
+    if (tok.type == TT_IDENT)
+      printf("Ident(%s)\n", (char *)tok.data);
+    if (tok.type == TT_DIRECTIVE)
+      printf("Directive(%s)\n", (char *)tok.data);
+    if (tok.type == TT_NUMERIC)
+      printf("Numeric(%d)\n", *(int *)tok.data);
+    if (tok.type == TT_SEPARATOR)
+      printf("Separator(,)\n");
+    if (tok.type == TT_LABEL)
+      printf("Label(:)\n");
+    free(tok.data);
+  }
+
+  /*
   uint8_t *memory = CPU_memnew();
   uint8_t *stack = CPU_membeginstack(memory);
   uint8_t status_register = INITIAL_STATUS_REGISTER_FLAGS;
@@ -41,6 +72,7 @@ int main() {
 
   flash_fmemdestroy(&fmemory);
   CPU_memdestroy(&memory);
+  */
 
   return 0;
 }
