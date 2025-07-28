@@ -1,6 +1,4 @@
 #include "asm.h"
-#include "cpu.h"
-#include "flash.h"
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -46,16 +44,29 @@ char *read_file(const char *filename) {
   return buffer;
 }
 
-int main() {
-  char *example = read_file("./example.asm");
+int main(int argc, char *argv[]) {
+  if (argc < 2) {
+    perror("File argument missing");
+    return 1;
+  }
+
+  char *example = read_file(argv[1]);
   if (example == NULL) {
+    perror("File can't be read");
     return 1;
   }
 
   struct asm_node *nodes;
   size_t nodes_len = parse_all(example, &nodes);
 
-  print_ast(nodes, nodes_len);
-
-  return 0;
+  for (size_t i = 0; i < nodes_len; ++i) {
+    switch (nodes[i].type) {
+    case NT_DIRECTIVE:
+      break;
+    case NT_LABEL:
+      break;
+    case NT_INSTRUCTION:
+      break;
+    }
+  }
 }

@@ -1,3 +1,5 @@
+ADD R0,R1
+
 .DSEG
 .ORG 0x0100
 
